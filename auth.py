@@ -5,9 +5,10 @@ import base64
 import urllib.parse
 import webbrowser
 import requests
-
+import json
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from dotenv import load_dotenv
+
 
 # Cargar variables del archivo .env
 load_dotenv()
@@ -16,6 +17,7 @@ CLIENT_ID = os.getenv("SPOTIFY_CLIENT_ID")
 REDIRECT_URI = os.getenv("SPOTIFY_REDIRECT_URI")
 AUTH_URL = "https://accounts.spotify.com/authorize"
 TOKEN_URL = "https://accounts.spotify.com/api/token"
+TOKEN_CACHE_FILE = "token_cache.json"
 
 SCOPES = [
     "user-read-playback-state",
@@ -56,100 +58,53 @@ def build_auth_url(code_challenge, state):
     return auth_url
 
 class CallbackHandler(BaseHTTPRequestHandler):
+    access_token = None
+
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
         params = urllib.parse.parse_qs(parsed.query)
 
         if "error" in params:
             print("Spotify devolvió un error:", params["error"][0])
+            self.send_response(400)
+            self.end_headers()
+            self.wfile.write(b"Spotify devolvio un error de autorizacion.")
             return
-
+        
+        if "code" not in params or "state" not in params:
+            print("Callback incompleto")
+            self.send_response(400)
+            self.end_headers()
+            self.wfile.write(b"Callback de Spotify incompleto.")
+            return
+        
         code = params["code"][0]
         received_state = params["state"][0]
 
         if received_state != state:
             print("Error: state no coincide")
+            self.send_response(400)
+            self.end_headers()
+            self.wfile.write(b"Error de seguridad: state incorrecto.")
             return
         
         response = exchange_code_for_token(code, verifier)
         
         if response.status_code != 200:
             print("Error obteniendo token:", response.status_code)
+            self.send_response(500)
+            self.end_headers()
+            self.wfile.write(
+                b"No se pudo obtener el token de Spotify."
+            )
             return
         
         token_data = response.json()
-        access_token = token_data["access_token"]
+        CallbackHandler.access_token = token_data["access_token"]
 
-        #pause_response = pause_playback(access_token)
-        #print("Pause status:", pause_response.status_code)
+        if "refresh_token" in token_data:
+            save_refresh_token(token_data["refresh_token"])
 
-        #play_response = resume_playback(access_token)
-        #print("Play status:", play_response.status_code)
-
-        #volume_response = set_volume(access_token, 100)
-        #print("Volume status:", volume_response.status_code)
-
-        #next_response = next_track(access_token)
-        #print("Change status:", next_response.status_code)
-
-        #previous_response = previous_track(access_token)
-        #print("Change status:", previous_response.status_code)
-
-        search_response = search_tracks(access_token, "Kanye West")
-        print("Search status:", search_response.status_code)
-
-        if search_response.status_code == 200:
-            data = search_response.json()
-            tracks = data["tracks"]["items"]
-
-            songs = []
-
-            for track in tracks:
-                song = {
-                    "name": track["name"],
-                    "artist": track["artists"][0]["name"],
-                    "album": track["album"]["name"],
-                    "image": track["album"]["images"][0]["url"],
-                    "uri": track["uri"]
-                }
-
-                songs.append(song)
-
-            print(songs)
-
-            if songs:
-                selected_song = songs[0]
-
-                print(
-                    "Reproduciendo:",
-                    selected_song["name"],
-                    "-",
-                    selected_song["artist"]
-                )
-
-                play_response = play_track(
-                    access_token,
-                    selected_song["uri"]
-                )
-
-                print("Play track status:", play_response.status_code)
-                
-        track_response = get_current_track(access_token)
-        print("Estado canción:", track_response.status_code)
-
-        if track_response.status_code == 200:
-            track_data = track_response.json()
-
-            song_name = track_data["item"]["name"]
-            artist_name = track_data["item"]["artists"][0]["name"]
-
-            print("Canción:", song_name)
-            print("Artista:", artist_name)
-        else:
-            print("No hay ninguna canción reproduciéndose.")
-
-        print("Status:", response.status_code)
-        
         self.send_response(200)
         self.end_headers()
         self.wfile.write(
@@ -166,6 +121,7 @@ def start_callback_server(url):
     webbrowser.open(url)
     server.handle_request()
     server.server_close()
+    return CallbackHandler.access_token
 
 def exchange_code_for_token(code, code_verifier):
     data = {
@@ -180,104 +136,59 @@ def exchange_code_for_token(code, code_verifier):
 
     return response
 
-def get_current_track(access_token):
-    url = "https://api.spotify.com/v1/me/player/currently-playing"
-
-    headers = {
-        "Authorization": f"Bearer {access_token}"
-    }
-
-    response = requests.get(url, headers=headers)
-
-    return response
-
-def pause_playback(access_token):
-    url = "https://api.spotify.com/v1/me/player/pause"
-
-    headers = {
-        "Authorization": f"Bearer {access_token}"
-    }
-    response = requests.put(url, headers=headers)
-    return response
-
-def resume_playback(access_token):
-    url = "https://api.spotify.com/v1/me/player/play"
-
-    headers = {
-        "Authorization": f"Bearer {access_token}"
-    }
-    response = requests.put(url, headers=headers)
-    return response
-
-def next_track(access_token):
-    url = "https://api.spotify.com/v1/me/player/next"
-
-    headers = {
-        "Authorization": f"Bearer {access_token}"
-    }
-    response = requests.post(url, headers=headers)
-    return response
-
-def previous_track(access_token):
-    url = "https://api.spotify.com/v1/me/player/previous"
-
-    headers = {
-        "Authorization": f"Bearer {access_token}"
-    }
-    response = requests.post(url, headers=headers)
-    return response
-
-def set_volume(access_token, volume_percent):
-    url = "https://api.spotify.com/v1/me/player/volume"
-
-    headers = {
-        "Authorization": f"Bearer {access_token}"
-    }
-    params = {
-    "volume_percent": volume_percent
-    }
-    if 0 <= volume_percent <= 100:
-        response = requests.put(url, headers=headers, params=params)
-        return response
-    else:
-        raise ValueError("El volumen debe estar entre 0 y 100")
-
-def search_tracks(access_token, query):
-    url = "https://api.spotify.com/v1/search"
-
-    headers = {
-        "Authorization": f"Bearer {access_token}"
-    }
-    params = {
-        "q": query,
-        "type": "track",
-        "limit": 5
-    }
-    response = requests.get(url, headers=headers, params=params)
-    return response
-
-def play_track(access_token, track_uri):
-    url = "https://api.spotify.com/v1/me/player/play"
-
-    headers = {
-        "Authorization": f"Bearer {access_token}"
-    }
-
+def save_refresh_token(refresh_token):
     data = {
-        "uris": [track_uri]
+        "refresh_token": refresh_token
     }
+    with open(TOKEN_CACHE_FILE, "w") as file:
+        json.dump(data, file)
 
-    response = requests.put(
-        url,
-        headers=headers,
-        json=data
-    )
+def load_refresh_token():
+    try:   
+        with open(TOKEN_CACHE_FILE, "r") as file:
+            data = json.load(file) 
+        return data["refresh_token"]
+    except FileNotFoundError:
+        return None
 
-    return response
+def refresh_access_token(refresh_token):
+    data = {
+        "grant_type": "refresh_token",
+        "refresh_token": refresh_token,
+        "client_id": CLIENT_ID
+    }
+    response = requests.post(TOKEN_URL, data=data)
+    if response.status_code == 200:
+        token_data = response.json()
+        if "refresh_token" in token_data:
+            save_refresh_token(token_data["refresh_token"])
+        access_token = token_data["access_token"]
+        return access_token
+    else:
+        return None
 
-#INICIO DEL PROGRAMA
-verifier = generate_code_verifier()
-challenge = generate_code_challenge(verifier)
-state = generate_state()
-url = build_auth_url(challenge, state)
-start_callback_server(url)
+
+def authenticate():
+    global verifier, state
+
+    refresh_token = load_refresh_token()
+
+    if refresh_token:
+        access_token = refresh_access_token(refresh_token)
+        if access_token:
+            return access_token
+
+    CallbackHandler.access_token = None
+
+    verifier = generate_code_verifier()
+    challenge = generate_code_challenge(verifier)
+    state = generate_state()
+
+    url = build_auth_url(challenge, state)
+
+    access_token = start_callback_server(url)
+
+    if access_token is None:
+        raise RuntimeError("No se pudo autenticar con Spotify.")
+
+    return access_token
