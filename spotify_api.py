@@ -177,7 +177,7 @@ class SpotifyClient:
                 if album_data["images"]:
                     image = album_data["images"][0]["url"]
                 else:
-                    image is None
+                    image = None
 
                 album = {
                     "name": album_data["name"],
