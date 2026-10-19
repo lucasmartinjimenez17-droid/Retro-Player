@@ -12,19 +12,26 @@ La idea final es que la aplicación muestre un gran tocadiscos en pantalla, con 
 
 ## Estado actual
 
-La interfaz **Frontend V1** ya se puede abrir con `python main.py`: tocadiscos
-dibujado con QPainter, panel lateral y controles con datos ficticios. No inicia
-OAuth ni realiza llamadas a Spotify. Consulta [la guía del frontend](docs/frontend-v1.md)
-para ejecución, estructura, pruebas y limitaciones visuales.
+La primera fase del proyecto, centrada en la integración con Spotify y la lógica principal, está completada.
 
-La demo incluye gestión de canciones mediante `···`, favoritos en **Liked Songs**,
-playlists editables por adición y una cola con cambios de sesión. Consulta
-[la guía de gestión de canciones](docs/song-management.md).
+El frontend **PySide6** funciona actualmente con datos mock independientes del backend.
+Se abre con `python main.py`, sin OAuth, credenciales ni llamadas a Spotify.
+Incluye tocadiscos dibujado con QPainter, controles ficticios, Search con navegación
+a álbumes y artistas, Playlists, Albums, Queue y Liked Songs. Permite guardar
+álbumes, crear playlists y añadir canciones durante la sesión.
 
-Actualmente ya funcionan:
+Documentación del frontend:
+
+- [Ejecución, estructura, pruebas y límites visuales](docs/frontend-v1.md).
+- [Menús, favoritos y gestión de canciones](docs/song-management.md).
+- [Navegación de Search y perfiles de artistas](docs/search-navigation.md).
+- [Álbumes guardados y creación de playlists](docs/library-management.md).
+
+En el backend ya funcionan:
 
 - Autenticación con Spotify mediante OAuth 2.0 + PKCE
-- Obtención del access token
+- Sesión persistente mediante refresh token
+- Renovación automática del access token
 - Lectura de la canción actual
 - Play y pause
 - Siguiente canción
@@ -33,6 +40,12 @@ Actualmente ya funcionan:
 - Búsqueda de canciones
 - Obtención de nombre, artista, álbum, portada y URI
 - Reproducción de una canción concreta a partir de su Spotify URI
+- Lectura de playlists del usuario
+- Lectura de álbumes guardados
+- Lectura de la cola de reproducción
+- Transformación de las respuestas JSON de Spotify en estructuras más simples para la aplicación
+
+La integración de la interfaz con el backend de Spotify sigue pendiente.
 
 ## Stack
 
@@ -41,10 +54,78 @@ Actualmente ya funcionan:
 - Requests
 - OAuth 2.0 + PKCE
 - python-dotenv
-- PySide6 y Qt / QSS (frontend V1 sin conexión)
+- PySide6 y Qt / QSS
 - Git y GitHub
 
 Más adelante: integración del frontend con Spotify y animaciones del tocadiscos.
+
+## Arquitectura actual
+
+```text
+RetroPlayer/
+│
+├── main.py
+├── main_window.py
+├── ui/
+├── tests/
+├── docs/
+├── auth.py
+├── spotify_api.py
+├── README.md
+├── requirements.txt
+├── .env
+├── token_cache.json
+└── .gitignore
+```
+
+### `auth.py`
+
+Gestiona la autenticación con Spotify:
+
+- Generación de PKCE
+- Construcción de la URL de autorización
+- Servidor local de callback
+- Intercambio del authorization code por tokens
+- Guardado y lectura del refresh token
+- Renovación automática del access token
+
+### `spotify_api.py`
+
+Contiene la clase `SpotifyClient`, encargada de comunicarse con Spotify Web API.
+
+Actualmente permite:
+
+- `play()`
+- `pause()`
+- `next()`
+- `previous()`
+- `set_volume()`
+- `get_current_track()`
+- `search_tracks()`
+- `play_track()`
+- `get_playlists()`
+- `get_saved_albums()`
+- `get_queue()`
+
+Los métodos que reciben respuestas grandes de Spotify transforman el JSON original y devuelven únicamente los datos que Retro Player necesita.
+
+### `main.py`
+
+Es el punto de entrada de la demo visual: crea QApplication y abre MainWindow.
+Antes de desarrollar el frontend se utilizaba como banco de pruebas para la
+autenticación, la creación de `SpotifyClient` y las funciones de Spotify.
+Los módulos originales del backend se conservan intactos, pero la demo no los importa.
+
+### Frontend y pruebas
+
+`main_window.py` coordina la interfaz; `ui/` contiene widgets, estilos, datos mock
+y estado compartido. `tests/` verifica interacciones, navegación y distribución;
+`docs/` incluye guías y capturas. No hay persistencia de cambios mock al cerrar.
+
+```powershell
+python main.py
+python -m unittest discover -s tests -v
+```
 
 ## Idea visual
 
@@ -62,35 +143,13 @@ La interfaz estará basada en una única pantalla principal:
 
 La estética será vintage pero minimalista, priorizando una interfaz limpia, fluida y visualmente cuidada.
 
-## Arquitectura prevista
-
-El proyecto se irá separando progresivamente en diferentes responsabilidades:
-
-```text
-RetroPlayer/
-│
-├── main.py
-├── auth.py
-├── spotify_api.py
-│
-├── .env
-├── .gitignore
-└── requirements.txt
-```
-
-- `auth.py`: autenticación con Spotify
-- `spotify_api.py`: comunicación con Spotify Web API
-- `main.py`: coordinación principal de la aplicación
-
-El frontend actual está en `main_window.py` y `ui/`; sus datos de ejemplo están
-separados del backend.
-
 ## Instalación
 
 Clona el repositorio:
 
 ```bash
-git clone <URL_DEL_REPOSITORIO>
+git clone https://github.com/lucasmartinjimenez17-droid/Retro-Player.git
+cd Retro-Player
 ```
 
 Crea un entorno virtual:
@@ -113,8 +172,7 @@ python -m pip install -r requirements.txt
 
 ## Configuración de Spotify
 
-Esta configuración solo es necesaria para utilizar el backend. La demo visual
-de `python main.py` funciona sin credenciales.
+Esta configuración solo se necesita para el backend; la demo visual funciona sin credenciales.
 
 Es necesario crear una aplicación en Spotify for Developers y configurar un archivo `.env`:
 
@@ -123,22 +181,68 @@ SPOTIFY_CLIENT_ID=tu_client_id
 SPOTIFY_REDIRECT_URI=http://127.0.0.1:8888/callback
 ```
 
-El archivo `.env` no debe subirse a GitHub.
+Los archivos sensibles o locales no deben subirse al repositorio:
 
-## Próximos pasos
+- `.env`
+- `token_cache.json`
 
-- Refactorizar la autenticación y la lógica de Spotify
-- Crear `SpotifyClient`
-- Añadir playlists
-- Añadir álbumes
-- Añadir cola
-- Construir la interfaz con PySide6
-- Diseñar el tocadiscos
-- Añadir animaciones limpias y fluidas
-- Pulir errores y experiencia de usuario
+Ambos están incluidos en `.gitignore`.
+
+## Roadmap
+
+### Fase 1 — Spotify y backend
+
+- [x] OAuth 2.0 + PKCE
+- [x] Sesión persistente
+- [x] SpotifyClient
+- [x] Play / pause
+- [x] Next / previous
+- [x] Volumen
+- [x] Canción actual
+- [x] Búsqueda
+- [x] Reproducción de canciones
+- [x] Playlists
+- [x] Álbumes guardados
+- [x] Cola
+
+### Fase 2 — Interfaz con PySide6
+
+- [ ] Aprender los fundamentos de PySide6
+- [x] Crear la ventana principal
+- [x] Diseñar layouts y widgets
+- [x] Añadir controles de reproducción
+- [x] Crear búsqueda visual
+- [x] Mostrar playlists, álbumes y cola
+- [ ] Conectar la interfaz con `SpotifyClient`
+- [x] Construir el tocadiscos estático
+- [x] Favoritos, perfiles de artistas y navegación entre vistas
+- [x] Guardar álbumes y crear playlists en la sesión mock
+
+### Fase 3 — Pulido
+
+- [ ] Animación del vinilo
+- [x] Portada mock integrada en el vinilo
+- [ ] Animación del brazo y la aguja
+- [ ] Transiciones y QSS
+- [ ] Gestión visual de errores
+- [ ] Mejorar la experiencia de usuario
+
+## Mejoras técnicas previstas
+
+Estas mejoras siguen pendientes para la integración y evolución del proyecto:
+
+- Centralizar los headers HTTP repetidos de `SpotifyClient`
+- Mejorar la gestión de errores y excepciones de red
+- Diferenciar entre resultados vacíos y errores de API
+- Añadir paginación para playlists y álbumes con más de 50 elementos
+- Eliminar dependencias de estado global en la autenticación
+- Evitar que las peticiones HTTP bloqueen la interfaz gráfica usando workers o threads cuando sea necesario
+- Seguir refactorizando solo cuando aporte claridad o mantenibilidad real
 
 ## Objetivo de aprendizaje
 
 Este proyecto no busca únicamente conseguir que la aplicación funcione.
 
-El objetivo es entender cómo se construye, poder modificarla y aprender conceptos como APIs, HTTP, JSON, OAuth, seguridad, POO, arquitectura de software, interfaces gráficas y Git mientras se desarrolla un proyecto real.
+El objetivo es entender cómo está construida, poder modificarla y aprender conceptos como APIs, HTTP, JSON, OAuth, seguridad, POO, arquitectura de software, interfaces gráficas y Git mientras se desarrolla un proyecto real.
+
+La prioridad es comprender las decisiones técnicas y ser capaz de mantener y ampliar el proyecto de forma progresivamente más autónoma.
