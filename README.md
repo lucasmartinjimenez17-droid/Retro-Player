@@ -26,6 +26,7 @@ Documentación del frontend:
 - [Menús, favoritos y gestión de canciones](docs/song-management.md).
 - [Navegación de Search y perfiles de artistas](docs/search-navigation.md).
 - [Álbumes guardados y creación de playlists](docs/library-management.md).
+- [Indicador de reproducción animado](docs/playback-indicator.md).
 
 En el backend ya funcionan:
 
@@ -220,6 +221,7 @@ Ambos están incluidos en `.gitignore`.
 
 ### Fase 3 — Pulido
 
+- [x] Ecualizador visual de reproducción en las filas de canciones
 - [ ] Animación del vinilo
 - [x] Portada mock integrada en el vinilo
 - [ ] Animación del brazo y la aguja

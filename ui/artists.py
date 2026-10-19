@@ -122,7 +122,6 @@ class ArtistProfile(QWidget):
         tracks = [TRACKS_BY_ID[track_id] for track_id in artist.track_ids]
         while len(self.track_rows) < len(tracks):
             row = TrackRow(tracks[len(self.track_rows)], None, state=self.state)
-            row.show_playing_indicator = False
             row.clicked.connect(lambda checked=False, item=row: self.track_requested.emit(item.track))
             self.songs.addWidget(row)
             self.track_rows.append(row)

@@ -57,7 +57,6 @@ class LikedSongs(QWidget):
         tracks = [TRACKS_BY_ID[track_id] for track_id in self.state.liked_ids]
         while len(self.rows) < len(tracks):
             row = TrackRow(tracks[len(self.rows)], None, state=self.state)
-            row.show_playing_indicator = False
             row.clicked.connect(lambda checked=False, item=row: self.track_requested.emit(item.track))
             self.rows_layout.insertWidget(len(self.rows), row)
             self.rows.append(row)

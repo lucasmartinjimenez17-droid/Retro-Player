@@ -4,14 +4,15 @@ import sys
 import unittest
 from unittest.mock import patch
 
-from PySide6.QtCore import QCoreApplication, QEvent, Qt
+from PySide6.QtCore import QAbstractAnimation, QCoreApplication, QEvent, Qt, QTimer
 from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import QApplication, QFrame
 from shiboken6 import delete
 
 from main_window import MainWindow
 from ui.mock_data import ALBUMS, ALBUMS_BY_ID, PLAYLISTS, TRACKS, INITIAL_SAVED_ALBUM_IDS, TRACKS_BY_ID
-from ui.widgets import cover_art, deck_texture
+from ui.widgets import TrackRow, cover_art, deck_texture
+from ui.playback_indicator import PlaybackIndicator
 
 
 class FrontendTests(unittest.TestCase):
@@ -738,7 +739,7 @@ class FrontendTests(unittest.TestCase):
                     # Find the actual gold heart pixels in the title line; excludes cover/number.
                     points = []
                     for y in range(14, 36):
-                        for x in range(int(title_rect.left()), int(duration_rect.left())):
+                        for x in range(int(title_rect.left()), row.indicator.x()):
                             color = image.pixelColor(x, y)
                             if color.red() - color.green() > 15 and color.green() - color.blue() > 20 and color.green() > 110:
                                 points.append((x, y))
@@ -1209,6 +1210,150 @@ class FrontendTests(unittest.TestCase):
         self.menu_action(row, 3)
         self.assertIn(row.track.id, w.state.liked_ids)
         self.assertEqual(w.state.queue_ids[-1], row.track.id)
+
+    def assert_playback_indicators(self):
+        w = self.window
+        for row in w.findChildren(TrackRow):
+            active = row.track.id == w.current_track.id
+            self.assertEqual(row.indicator.isVisible(), active and row.isVisible())
+            running = row.indicator.animation.state() == QAbstractAnimation.State.Running
+            self.assertEqual(running, active and row.isVisible() and w.is_playing)
+
+    def test_equalizer_moves_freezes_resumes_and_follows_transport(self):
+        w = self.window
+        self.assert_playback_indicators()
+        indicator = w.top_rows[0].indicator
+        frame = indicator.grab().toImage()
+        QTest.qWait(130)
+        self.assertNotEqual(frame, indicator.grab().toImage())
+        self.click(w.play_button)
+        phase, frame = indicator.phase, indicator.grab().toImage()
+        QTest.qWait(90)
+        self.assertEqual(phase, indicator.phase)
+        self.assertEqual(frame, indicator.grab().toImage())
+        self.assert_playback_indicators()
+        self.click(w.next_button)
+        self.assertFalse(indicator.isVisible())
+        self.assertEqual(indicator.animation.state(), QAbstractAnimation.State.Stopped)
+        self.assert_playback_indicators()
+        self.click(w.play_button)
+        self.assert_playback_indicators()
+        self.click(w.previous_button)
+        self.assert_playback_indicators()
+        self.click(w.rows[3])
+        self.assert_playback_indicators()
+
+    def test_equalizer_follows_all_sections_and_shared_song_ids(self):
+        from ui.mock_data import ARTISTS
+        w = self.window
+        self.tab("Albums")
+        w.albums.open_album(ALBUMS[-1].id)
+        self.click(w.albums.track_rows[1])
+        track = w.current_track
+        self.assert_playback_indicators()
+        w.state.set_liked(track.id, True)
+        self.tab("Liked")
+        self.assert_playback_indicators()
+        self.click(w.liked.rows[0])
+        playlist = w.state.create_playlist("Moving bars")
+        w.state.add_to_playlist(playlist.id, track.id)
+        self.tab("Playlists")
+        w.playlists.open_playlist(playlist)
+        self.click(w.playlists.track_rows[0])
+        self.assert_playback_indicators()
+        self.tab("Search")
+        artist = next(artist for artist in ARTISTS if track.id in artist.track_ids)
+        w.search.setText(artist.name)
+        self.click(self.search_result("artist", artist.id))
+        self.assert_playback_indicators()
+        self.click(w.artist_profile.track_rows[0])
+        self.assert_playback_indicators()
+        # Duplicate Queue entries are allowed and must agree about playback.
+        for _ in range(2):
+            w.state.add_to_queue(w.current_track.id)
+        self.tab("Queue")
+        self.assert_playback_indicators()
+        self.click(w.play_button)
+        self.assert_playback_indicators()
+
+    def test_equalizer_navigation_reuses_animations_and_releases_hidden_resources(self):
+        w = self.window
+        # Warm the reusable collection row pools before comparing object counts.
+        self.tab("Albums")
+        for album in ALBUMS:
+            w.albums.open_album(album.id)
+        self.tab("Playlists")
+        for playlist in PLAYLISTS:
+            w.playlists.open_playlist(playlist)
+        animations = {item.animation for item in w.findChildren(PlaybackIndicator)}
+        timer_count = len(w.findChildren(QTimer))
+        for i in range(15):
+            self.tab("Search")
+            self.click(w.rows[i % len(TRACKS)])
+            self.assert_playback_indicators()
+            self.tab("Albums")
+            w.albums.open_album(ALBUMS[i % len(ALBUMS)].id)
+            self.assert_playback_indicators()
+            self.tab("Playlists")
+            w.playlists.open_playlist(PLAYLISTS[i % len(PLAYLISTS)])
+            self.assert_playback_indicators()
+        self.assertEqual({item.animation for item in w.findChildren(PlaybackIndicator)}, animations)
+        self.assertEqual(len(w.findChildren(QTimer)), timer_count)
+        self.tab("Search")
+        w.search.setText("no visible songs")
+        self.assertTrue(all(a.state() != QAbstractAnimation.State.Running for a in animations))
+        w.search.clear()
+        self.assert_playback_indicators()
+        # An ordinary queued UI callback still executes while bars move.
+        callbacks = []
+        QTimer.singleShot(0, lambda: callbacks.append(True))
+        QTest.qWait(50)
+        self.assertEqual(callbacks, [True])
+        w.hide()
+        self.assertTrue(all(a.state() == QAbstractAnimation.State.Stopped for a in animations))
+        w.show()
+        self.app.processEvents()
+        self.assert_playback_indicators()
+
+    def test_equalizer_row_destruction_destroys_animation(self):
+        from shiboken6 import isValid
+        row = TrackRow(TRACKS[0], 0, state=self.window.state)
+        row.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen)
+        row.setChecked(True)
+        row.show()
+        self.app.processEvents()
+        indicator, animation = row.indicator, row.indicator.animation
+        self.assertEqual(animation.state(), QAbstractAnimation.State.Running)
+        destroyed = QSignalSpy(animation.destroyed)
+        row.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        self.assertEqual(destroyed.count(), 1)
+        self.assertFalse(isValid(indicator))
+        self.assertFalse(isValid(animation))
+        QTest.qWait(50)
+
+    def test_equalizer_column_preserves_title_heart_duration_and_menu(self):
+        from dataclasses import replace
+        from ui.mock_data import time_text
+        w = self.window
+        for size in ((1120, 760), (1400, 900), (1680, 1050)):
+            w.resize(*size)
+            self.tab("Search")
+            self.click(w.rows[2])
+            row = w.rows[2]
+            original = row.track
+            row.track = replace(original, title="A long title with a heart " * 6)
+            w.state.set_liked(original.id, True)
+            image, calls = self.capture_row_text(row)
+            title_rect, text = calls[0]
+            duration = next(rect for rect, text in calls if text == time_text(original.seconds))
+            self.assertIn("…", text)
+            self.assertLess(title_rect.right() + 18, row.indicator.x())
+            self.assertLess(row.indicator.geometry().right(), duration.left())
+            self.assertLess(duration.right(), row.options_button.x())
+            self.assertEqual(row.height(), 68)
+            self.assertFalse(image.isNull())
+            row.track = original
 
     def test_album_save_and_playlist_form_layout_at_supported_sizes(self):
         w, browser = self.window, self.window.playlists

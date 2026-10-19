@@ -228,7 +228,6 @@ class PlaylistBrowser(QStackedWidget):
 
     def _add_row(self):
         row = TrackRow(TRACKS[0], 0, state=self.state)
-        row.show_playing_indicator = False
         row.clicked.connect(lambda checked=False: self._request_track(row))
         self.detail_rows_layout.insertWidget(len(self.track_rows), row)
         self.track_rows.append(row)

@@ -284,9 +284,9 @@ class MainWindow(QMainWindow):
         self.progress.blockSignals(False)
         self.elapsed.setText(time_text(self.progress.value()))
         for row in self.rows:
-            row.setChecked(row.index == self.current_index)
+            row.setChecked(row.track.id == track.id)
         for row in self.top_rows:
-            row.setChecked(False)
+            row.setChecked(row.track.id == track.id)
         self.playlists.sync_playback(self.current_track, self.is_playing)
         self.albums.sync_playback(track, self.is_playing)
         self.liked.sync_playback(track, self.is_playing)
@@ -314,7 +314,7 @@ class MainWindow(QMainWindow):
         self.status.setText("DEMO SESSION" if self.is_playing else "DEMO PAUSED")
         self.turntable.playing = self.is_playing
         self.turntable.update()
-        for row in self.rows:
+        for row in [*self.rows, *self.top_rows]:
             row.playing = self.is_playing
             row.update()
         self.playlists.sync_playback(self.current_track, self.is_playing)
@@ -399,7 +399,6 @@ class MainWindow(QMainWindow):
         while len(self.queue_rows) < len(self.state.queue_ids):
             track = TRACKS_BY_ID[self.state.queue_ids[len(self.queue_rows)]]
             row = TrackRow(track, None, state=self.state)
-            row.show_playing_indicator = False
             row.clicked.connect(lambda checked=False, item=row: self._show_track(item.track))
             self.rows_layout.insertWidget(self.rows_layout.indexOf(self.empty), row)
             row.hide()

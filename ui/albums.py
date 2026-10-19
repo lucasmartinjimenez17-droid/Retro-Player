@@ -166,7 +166,6 @@ class AlbumBrowser(QStackedWidget):
         for position in range(max(len(album.tracks) for album in ALBUMS)):
             row = TrackRow(ALBUMS[0].tracks[0], position, state=self.state)
             row.track_number = position + 1
-            row.show_playing_indicator = False
             row.clicked.connect(lambda checked=False, item=row: self.track_requested.emit(item.track))
             rows.addWidget(row)
             self.track_rows.append(row)

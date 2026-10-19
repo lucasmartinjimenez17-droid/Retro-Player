@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
 )
 
 from ui.mock_data import TRACKS, Track, time_text
+from ui.playback_indicator import PlaybackIndicator
 
 
 def font(size, family="Segoe UI", bold=False):
@@ -133,10 +134,11 @@ class TrackRow(QPushButton):
         self.track, self.index = track, index
         self.album_mode = False
         self.result_mode = "song"
-        self.playing = True
-        self.show_playing_indicator = True
+        self._playing = True
+        self.indicator = PlaybackIndicator(self)
         self.track_number = None
         self.setCheckable(True)
+        self.toggled.connect(self._sync_indicator)
         self.setFixedHeight(68)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -161,6 +163,21 @@ class TrackRow(QPushButton):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self.options_button.move(self.width() - 32, (self.height() - 32) // 2)
+        offset = 32 if self.state is not None and self.result_mode == "song" else 0
+        self.indicator.move(self.width() - 71 - offset, 25)
+
+    @property
+    def playing(self):
+        return self._playing
+
+    @playing.setter
+    def playing(self, value):
+        self._playing = value
+        self._sync_indicator()
+
+    def _sync_indicator(self):
+        active = self.isChecked() and self.result_mode == "song" and not self.album_mode
+        self.indicator.set_playback(active, self.playing)
 
     def open_menu(self):
         if self.state is not None and self.result_mode == "song":
@@ -228,7 +245,9 @@ class TrackRow(QPushButton):
             p.drawPixmap(8, 10, 48, 48, cover_art(self.track.colors))
         text_left = 44 if self.track_number is not None else 74
         has_options = self.state is not None and self.result_mode == "song"
-        trailing = 94 if has_options else 60
+        # A separate 18 px indicator column plus an 8 px gap keeps the duration,
+        # heart and menu independent. Reserve it even on inactive rows.
+        trailing = 120 if has_options else 86
         width = max(0, self.width() - text_left - trailing)
         p.setFont(font(14))
         p.setPen(QColor("#f0ece6"))
@@ -253,12 +272,10 @@ class TrackRow(QPushButton):
         p.drawText(QRectF(text_left, 37, width, 20),
                    p.fontMetrics().elidedText(subtitle, Qt.TextElideMode.ElideRight, width))
         offset = 32 if has_options else 0
-        # Available durations always take precedence over the playback indicator.
+        # Duration has its own column in every playback/like state.
         if is_song and self.track.seconds is not None:
             p.drawText(QRectF(self.width() - 45 - offset, 23, 37, 24),
                        Qt.AlignmentFlag.AlignCenter, time_text(self.track.seconds))
-        elif is_song and active and self.playing and self.show_playing_indicator:
-            icon("playing", "#d8b47f", 18).paint(p, self.width() - 33 - offset, 25, 18, 18)
         if self.hasFocus():
             p.setBrush(Qt.BrushStyle.NoBrush)
             p.setPen(QPen(QColor("#947549"), 1.5))
