@@ -12,6 +12,15 @@ La idea final es que la aplicación muestre un gran tocadiscos en pantalla, con 
 
 ## Estado actual
 
+La interfaz **Frontend V1** ya se puede abrir con `python main.py`: tocadiscos
+dibujado con QPainter, panel lateral y controles con datos ficticios. No inicia
+OAuth ni realiza llamadas a Spotify. Consulta [la guía del frontend](docs/frontend-v1.md)
+para ejecución, estructura, pruebas y limitaciones visuales.
+
+La demo incluye gestión de canciones mediante `···`, favoritos en **Liked Songs**,
+playlists editables por adición y una cola con cambios de sesión. Consulta
+[la guía de gestión de canciones](docs/song-management.md).
+
 Actualmente ya funcionan:
 
 - Autenticación con Spotify mediante OAuth 2.0 + PKCE
@@ -32,13 +41,10 @@ Actualmente ya funcionan:
 - Requests
 - OAuth 2.0 + PKCE
 - python-dotenv
+- PySide6 y Qt / QSS (frontend V1 sin conexión)
 - Git y GitHub
 
-Más adelante:
-
-- PySide6
-- Qt / QSS
-- Animaciones del tocadiscos
+Más adelante: integración del frontend con Spotify y animaciones del tocadiscos.
 
 ## Idea visual
 
@@ -76,7 +82,8 @@ RetroPlayer/
 - `spotify_api.py`: comunicación con Spotify Web API
 - `main.py`: coordinación principal de la aplicación
 
-Más adelante se añadirá la interfaz gráfica con PySide6.
+El frontend actual está en `main_window.py` y `ui/`; sus datos de ejemplo están
+separados del backend.
 
 ## Instalación
 
@@ -105,6 +112,9 @@ python -m pip install -r requirements.txt
 ```
 
 ## Configuración de Spotify
+
+Esta configuración solo es necesaria para utilizar el backend. La demo visual
+de `python main.py` funciona sin credenciales.
 
 Es necesario crear una aplicación en Spotify for Developers y configurar un archivo `.env`:
 
