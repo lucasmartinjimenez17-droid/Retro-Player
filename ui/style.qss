@@ -3,7 +3,7 @@ QWidget { font-family: "Segoe UI"; font-size: 13px; }
 QLabel { background: transparent; color: #ece9e3; }
 QLabel#brand { font-family: "Georgia"; font-size: 20px; letter-spacing: 6px; color: #e7caa2; }
 QLabel#micro { color: #89949d; font-size: 9px; letter-spacing: 2px; }
-QFrame#controlStrip { background: qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 #1d2933,stop:1 #0c1720); border: 1px solid #111a20; border-radius: 13px; }
+QFrame#controlStrip { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #101a22,stop:0.12 #1b2831,stop:1 #101b23); border: 1px solid #080f14; border-top: 2px solid #070d12; border-bottom: 1px solid #927046; border-radius: 7px; }
 QLabel#songTitle { font-size: 13px; color: #f2eee8; }
 QLabel#artist { font-size: 12px; color: #9aa3ab; }
 QLabel#time { color: #c9ab82; font-size: 10px; }
@@ -18,13 +18,13 @@ QPushButton#tab:checked { color: #ebc99a; border-bottom: 2px solid #e4bd88; }
 QPushButton#tab:hover { background: #25313b; }
 QPushButton#tab:pressed { background: #34404a; }
 QPushButton#tab:focus { border-top: 1px solid #a58b63; }
-QPushButton#iconButton { background: transparent; border: 1px solid transparent; border-radius: 21px; }
+QPushButton#iconButton { background: transparent; border: 2px solid transparent; border-radius: 18px; }
 QPushButton#iconButton:hover { background: #293945; }
 QPushButton#iconButton:pressed { background: #3a4b51; }
 QPushButton#primaryButton { background: #192630; border: 2px solid #e6be8c; border-radius: 26px; }
 QPushButton#primaryButton:hover { background: #33424c; }
 QPushButton#primaryButton:pressed { background: #52606a; }
-QPushButton#iconButton:focus, QPushButton#primaryButton:focus { border: 2px solid #f7d8ac; }
+QPushButton#iconButton[keyboardFocus="true"]:focus, QPushButton#primaryButton[keyboardFocus="true"]:focus { border: 2px solid #f7d8ac; }
 QSlider::groove:horizontal { height: 3px; background: #36424c; border-radius: 1px; }
 QSlider::sub-page:horizontal { background: #dfb785; border-radius: 1px; }
 QSlider::handle:horizontal { background: #e5bd8b; width: 10px; height: 10px; margin: -4px 0; border-radius: 5px; }

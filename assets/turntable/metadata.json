@@ -1,0 +1,44 @@
+{
+  "version": 1,
+  "design_size": [820, 650],
+  "background": "#101c25",
+  "record_center": [395, 300],
+  "record_radius": 263,
+  "arm_pivot": [720, 115],
+  "stylus": [576.74, 441.04],
+  "label": {
+    "rect": [312.6, 217.6, 164.8, 164.8],
+    "paper_source": [440.5, 439.5, 372, 372]
+  },
+  "layers": {
+    "base": {
+      "file": "base.png",
+      "source_size": [1408, 1117],
+      "rect": [0, 0, 820, 650]
+    },
+    "mount": {
+      "file": "mount.png",
+      "source_size": [1254, 1254],
+      "decode_max": 384,
+      "rect": [660, 61, 120, 120]
+    },
+    "vinyl": {
+      "file": "vinyl.png",
+      "source_size": [1254, 1254],
+      "rect": [117.5, 22.5, 555, 555]
+    },
+    "spindle": {
+      "file": "spindle.png",
+      "source_size": [1254, 1254],
+      "decode_max": 128,
+      "rect": [383, 287.5, 24, 24]
+    },
+    "tonearm": {
+      "file": "tonearm.png",
+      "source_size": [948, 1659],
+      "source_pivot": [669, 326],
+      "source_stylus": [118, 1580],
+      "rect": [546.06, 30.24, 246.48, 431.34]
+    }
+  }
+}

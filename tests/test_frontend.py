@@ -125,6 +125,52 @@ class FrontendTests(unittest.TestCase):
         QTest.keyClick(w.play_button, Qt.Key.Key_Space)
         self.assertFalse(w.is_playing)
 
+    def test_previous_next_share_normal_hover_pressed_and_focus_visuals(self):
+        from PySide6.QtGui import QImage, QPainter, QColor
+        from PySide6.QtWidgets import QStyle, QStyleOptionButton
+        from ui.widgets import icon
+        previous, following = self.window.previous_button, self.window.next_button
+        # Mirror geometry must agree; allow the rasterizer's 1-level rounding
+        # on antialiased edges when the path is traversed in reverse.
+        left = icon("previous").pixmap(48, 48).toImage()
+        right = icon("next").pixmap(48, 48).toImage().flipped(Qt.Orientation.Horizontal)
+        for y in range(48):
+            for x in range(48):
+                self.assertLessEqual(abs(left.pixelColor(x, y).alpha() - right.pixelColor(x, y).alpha()), 1)
+        states = (QStyle.StateFlag.State_None, QStyle.StateFlag.State_MouseOver,
+                  QStyle.StateFlag.State_Sunken, QStyle.StateFlag.State_HasFocus)
+        for state in states:
+            images = []
+            for button in (previous, following):
+                button._set_keyboard_focus(state == QStyle.StateFlag.State_HasFocus)
+                option = QStyleOptionButton()
+                button.initStyleOption(option)
+                option.state = QStyle.StateFlag.State_Enabled | QStyle.StateFlag.State_Active | state
+                image = QImage(button.size(), QImage.Format.Format_ARGB32_Premultiplied)
+                image.fill(QColor("#182630"))
+                p = QPainter(image)
+                button.style().drawControl(QStyle.ControlElement.CE_PushButton, option, p, button)
+                p.end()
+                images.append(image)
+            # Ignore the central glyph: the surrounding button treatment must
+            # match exactly, including border, hover and focus rendering.
+            for y in range(36):
+                for x in range(36):
+                    if x < 6 or x >= 30 or y < 6 or y >= 30:
+                        self.assertEqual(images[0].pixel(x, y), images[1].pixel(x, y), state)
+
+    def test_transport_focus_ring_follows_keyboard_without_sticking_after_click(self):
+        from PySide6.QtGui import QFocusEvent
+        for button in (self.window.previous_button, self.window.next_button):
+            QCoreApplication.sendEvent(button, QFocusEvent(QEvent.Type.FocusIn, Qt.FocusReason.TabFocusReason))
+            self.assertTrue(button.property("keyboardFocus"))
+            self.click(button)
+            self.assertFalse(button.property("keyboardFocus"))
+            QTest.keyClick(button, Qt.Key.Key_Space)
+            self.assertTrue(button.property("keyboardFocus"))
+            QCoreApplication.sendEvent(button, QFocusEvent(QEvent.Type.FocusOut, Qt.FocusReason.TabFocusReason))
+            self.assertFalse(button.property("keyboardFocus"))
+
     def test_layout_and_paint_at_supported_sizes(self):
         w = self.window
         for width, height in ((1120, 760), (1400, 900), (1680, 1050)):
@@ -135,7 +181,10 @@ class FrontendTests(unittest.TestCase):
                 self.assertFalse(w.grab().isNull())
                 panel = w.findChild(QFrame, "sidebar")
                 self.assertLessEqual(panel.geometry().right(), w.width())
-                graphic_bottom = w.turntable.mapTo(w, w.turntable.rect().bottomRight()).y()
+                deck = w.turntable
+                scale, origin = deck._asset_art.layout_transform(deck.size(), 112)
+                graphic_bottom = (deck.mapTo(w, deck.rect().topLeft()).y() + origin.y()
+                                  + deck._asset_art.metadata["transport_split"] * scale)
                 song_top = w.sleeve.mapTo(w, w.sleeve.rect().topLeft()).y()
                 self.assertLess(graphic_bottom, song_top)
                 self.assertTrue(w.play_button.isVisible())
@@ -1354,6 +1403,126 @@ class FrontendTests(unittest.TestCase):
             self.assertEqual(row.height(), 68)
             self.assertFalse(image.isNull())
             row.track = original
+
+    def test_approved_deck_has_one_frame_and_uses_the_player_area(self):
+        from ui.widgets import WoodFrame
+        deck = self.window.turntable
+        player = deck.parentWidget()
+        self.assertNotIsInstance(player, WoodFrame)
+        self.assertEqual(player.objectName(), "playerArea")
+        margins = player.layout().contentsMargins()
+        self.assertEqual((margins.left(), margins.top(), margins.right(), margins.bottom()), (0, 0, 0, 10))
+        strip = player.findChild(QFrame, "controlStrip")
+        for size in ((1120, 760), (1400, 900), (1680, 1050)):
+            self.window.resize(*size)
+            self.app.processEvents()
+            self.assertEqual(deck.width(), player.width())
+            # A small exterior margin belongs to the entire cabinet, never
+            # between the turntable and its inset controls.
+            bottom = deck.mapTo(self.window, deck.rect().bottomRight()).y()
+            self.assertGreaterEqual(self.window.height() - bottom - 1, 30)
+            self.assertIs(strip.parentWidget(), deck)
+            self.assertTrue(deck.rect().contains(strip.geometry()))
+            art = deck._asset_art
+            scale, origin = art.layout_transform(deck.size(), strip.height())
+            viewport = art.metadata["viewport"]
+            # Controls are inset in the same enclosure, above its bottom edge.
+            split = origin.y() + art.metadata["transport_split"] * scale
+            self.assertLessEqual(abs(strip.y() - split), .5)
+            self.assertGreater(strip.x(), 0)
+            self.assertLess(strip.geometry().right(), deck.width())
+            self.assertEqual(strip.height(), 112)
+            available = deck.height() - strip.height()
+            self.assertLess((available - viewport[3] * scale) / available, .12)
+            self.assertLess((deck.width() - viewport[2] * scale) / deck.width(), .12)
+            previous_scale = min((deck.width() - 24) / 820, (available - 26) / 650)
+            self.assertGreater(scale, previous_scale, "The record must gain screen area")
+            self.assertGreaterEqual(origin.y() + viewport[1] * scale, -0.001)
+            self.assertFalse(deck.grab().isNull())
+
+    def test_turntable_reuses_layers_and_updates_only_song_label(self):
+        import ui.widgets as widgets
+        w, deck = self.window, self.window.turntable
+        # Keep regression coverage of the complete procedural fallback.
+        deck._asset_art = None
+        deck.grab()
+        keys = {name: layer.cacheKey() for name, layer in deck._layers.items()}
+        old_label = deck._layers["label"].toImage()
+        texture_info = deck_texture.cache_info()
+        with patch.object(widgets, "raster", wraps=widgets.raster) as build:
+            for _ in range(6):
+                deck.grab()
+            self.assertEqual(build.call_count, 0)
+            self.click(w.next_button)
+            deck.grab()
+            self.assertEqual(build.call_count, 1, "Only the song label should be rebuilt")
+            self.assertNotEqual(old_label, deck._layers["label"].toImage())
+            self.assertIs(deck.track, TRACKS[1])
+            after_song = build.call_count
+            self.click(w.play_button)
+            paused = deck.grab().toImage()
+            self.click(w.play_button)
+            playing = deck.grab().toImage()
+            self.assertNotEqual(paused, playing, "Physical power marking reflects play/pause")
+            self.assertEqual(build.call_count, after_song)
+        for name in ("base", "record", "arm"):
+            self.assertEqual(deck._layers[name].cacheKey(), keys[name])
+        self.assertEqual(deck_texture.cache_info().misses, texture_info.misses)
+        self.assertFalse(deck.findChildren(QTimer))
+        self.assertFalse(deck.findChildren(QAbstractAnimation))
+
+    def test_turntable_density_and_resize_keep_cache_bounded(self):
+        import math
+        deck = self.window.turntable
+        deck._asset_art = None
+        deck.grab()
+        original = deck._layers["record"].cacheKey()
+        scale = min(deck.width() / 820, deck.height() / 650)
+        deck._ensure_art(scale, 2)
+        density = max(1.5, math.ceil(scale * 2 * 2) / 2)
+        self.assertEqual(deck._layer_density, density)
+        self.assertEqual(deck._layers["record"].width(), math.ceil(606 * density))
+        self.assertEqual(deck._surface.width(), deck.width() * 2)
+        self.assertNotEqual(deck._layers["record"].cacheKey(), original)
+        for size in ((1120, 760), (1400, 900), (1680, 1050), (1120, 760)):
+            self.window.resize(*size)
+            self.app.processEvents()
+            self.assertFalse(deck.grab().isNull())
+            self.assertEqual(set(deck._layers), {"base", "record", "label", "arm"})
+            keys = [layer.cacheKey() for layer in deck._layers.values()]
+            deck.grab()
+            self.assertEqual([layer.cacheKey() for layer in deck._layers.values()], keys)
+        # A one-pixel resize inside the current bucket must keep the grooves.
+        key = deck._layers["record"].cacheKey()
+        self.window.resize(1121, 760)
+        self.app.processEvents()
+        deck.grab()
+        self.assertEqual(deck._layers["record"].cacheKey(), key)
+
+    def test_turntable_artwork_fits_and_arm_buffer_has_unclipped_edges(self):
+        from PySide6.QtCore import QRectF
+        from ui.turntable_art import ARM_BOUNDS, CENTER
+        w, deck = self.window, self.window.turntable
+        deck._asset_art = None
+        for size in ((1120, 760), (1400, 900), (1680, 1050)):
+            w.resize(*size)
+            self.app.processEvents()
+            deck.grab()
+            available_height = deck.height() - deck._transport.height()
+            scale = min(deck.width() / 820, available_height / 650)
+            dx, dy = (deck.width() - 820 * scale) / 2, (available_height - 650 * scale) / 2
+            for rect in (ARM_BOUNDS, QRectF(CENTER.x() - 310, CENTER.y() - 310, 620, 620),
+                         QRectF(22, 30, 66, 96), QRectF(756, 588, 44, 44)):
+                mapped = QRectF(dx + rect.x() * scale, dy + rect.y() * scale,
+                                rect.width() * scale, rect.height() * scale)
+                self.assertTrue(QRectF(0, 0, deck.width(), available_height).contains(mapped), (size, mapped))
+            arm = deck._layers["arm"].toImage()
+            for x in range(arm.width()):
+                self.assertEqual(arm.pixelColor(x, 0).alpha(), 0)
+                self.assertEqual(arm.pixelColor(x, arm.height() - 1).alpha(), 0)
+            for y in range(arm.height()):
+                self.assertEqual(arm.pixelColor(0, y).alpha(), 0)
+                self.assertEqual(arm.pixelColor(arm.width() - 1, y).alpha(), 0)
 
     def test_album_save_and_playlist_form_layout_at_supported_sizes(self):
         w, browser = self.window, self.window.playlists

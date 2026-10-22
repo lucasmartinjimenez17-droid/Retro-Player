@@ -1,11 +1,10 @@
 """Resolution-independent artwork and reusable Qt widgets."""
 import math
-import random
 from functools import lru_cache
 
 from PySide6.QtCore import QPoint, QPointF, QRectF, QSize, Qt
 from PySide6.QtGui import (
-    QColor, QConicalGradient, QFont, QIcon, QLinearGradient, QPainter,
+    QColor, QFont, QIcon, QPainter,
     QPainterPath, QPen, QPixmap, QPolygonF,
 )
 from PySide6.QtWidgets import (
@@ -15,6 +14,11 @@ from PySide6.QtWidgets import (
 
 from ui.mock_data import TRACKS, Track, time_text
 from ui.playback_indicator import PlaybackIndicator
+from ui.turntable_assets import ASSET_DIRECTORY, LayeredTurntable, load_artwork
+from ui.turntable_art import (
+    ARM_BOUNDS, CENTER, deck_texture, paint_arm, paint_base, paint_label,
+    paint_power, paint_record, paint_spindle, paint_surface, paint_wood, raster,
+)
 
 
 def font(size, family="Segoe UI", bold=False):
@@ -25,7 +29,7 @@ def font(size, family="Segoe UI", bold=False):
 
 
 @lru_cache(maxsize=24)
-def cover_art(colors: tuple[str, str, str], size=256) -> QPixmap:
+def cover_art(colors: tuple[str, str, str], size=256, *, circular=False) -> QPixmap:
     """Original geometric sleeve art, generated locally and cached."""
     pixmap = QPixmap(size, size)
     pixmap.fill(QColor(colors[0]))
@@ -33,6 +37,26 @@ def cover_art(colors: tuple[str, str, str], size=256) -> QPixmap:
     p.setRenderHint(QPainter.RenderHint.Antialiasing)
     p.scale(size / 256, size / 256)
     p.setPen(Qt.PenStyle.NoPen)
+    if circular:
+        # The existing mock sleeve has text in its corners. Lay out the same
+        # sun/wave artwork for a round printed label so no title gets clipped.
+        p.setBrush(QColor(colors[1]))
+        p.drawEllipse(QRectF(105, 60, 84, 84))
+        p.setBrush(QColor(colors[2]))
+        wave = QPainterPath(QPointF(35, 170))
+        wave.cubicTo(91, 101, 132, 184, 220, 125)
+        wave.lineTo(217, 153)
+        wave.cubicTo(138, 213, 102, 136, 46, 191)
+        wave.closeSubpath()
+        p.drawPath(wave)
+        p.setPen(QColor(colors[1]))
+        p.setFont(font(11))
+        p.drawText(QRectF(25, 29, 206, 20), Qt.AlignmentFlag.AlignCenter, "THE LISTENING ROOM")
+        p.setFont(font(8))
+        p.drawText(QRectF(43, 200, 170, 15), Qt.AlignmentFlag.AlignCenter, "STEREO     ·     33⅓ RPM")
+        p.drawText(QRectF(68, 224, 120, 15), Qt.AlignmentFlag.AlignCenter, "RETRO PLAYER")
+        p.end()
+        return pixmap
     p.setBrush(QColor(colors[1]))
     p.drawEllipse(QRectF(94, 37, 115, 115))
     p.setBrush(QColor(colors[2]))
@@ -104,6 +128,9 @@ def icon(kind: str, color="#e9ddc8", size=24) -> QIcon:
             if kind == "previous":
                 p.translate(24, 0)
                 p.scale(-1, 1)
+            if kind in ("next", "previous"):
+                # Center the complete triangle + stop bar, then mirror it.
+                p.translate(-1.5, 0)
             p.drawPolygon(QPolygonF([QPointF(7, 5), QPointF(18, 12), QPointF(7, 19)]))
             if kind in ("next", "previous"):
                 p.drawRoundedRect(QRectF(18, 5, 2, 14), .7, .7)
@@ -115,6 +142,7 @@ class IconButton(QPushButton):
     def __init__(self, kind, label, primary=False, parent=None):
         super().__init__(parent)
         self.primary = primary
+        self.setProperty("keyboardFocus", False)
         self.setObjectName("primaryButton" if primary else "iconButton")
         self.setFixedSize(52 if primary else 36, 52 if primary else 36)
         self.setIconSize(QSize(24, 24))
@@ -125,6 +153,31 @@ class IconButton(QPushButton):
         self.setIcon(icon(kind, "#e7be8b"))
         self.setToolTip(label)
         self.setAccessibleName(label)
+
+    def _set_keyboard_focus(self, visible):
+        if self.property("keyboardFocus") != visible:
+            self.setProperty("keyboardFocus", visible)
+            self.style().unpolish(self)
+            self.style().polish(self)
+            self.update()
+
+    def focusInEvent(self, event):
+        self._set_keyboard_focus(event.reason() in (
+            Qt.FocusReason.TabFocusReason, Qt.FocusReason.BacktabFocusReason,
+            Qt.FocusReason.ShortcutFocusReason))
+        super().focusInEvent(event)
+
+    def focusOutEvent(self, event):
+        self._set_keyboard_focus(False)
+        super().focusOutEvent(event)
+
+    def mousePressEvent(self, event):
+        self._set_keyboard_focus(False)
+        super().mousePressEvent(event)
+
+    def keyPressEvent(self, event):
+        self._set_keyboard_focus(True)
+        super().keyPressEvent(event)
 
 
 class TrackRow(QPushButton):
@@ -328,207 +381,124 @@ class CollectionHeader(QFrame):
         layout.addLayout(info, 1)
 
 
-@lru_cache(maxsize=1)
-def deck_texture():
-    """Small deterministic local texture; cached, never generated per frame."""
-    pixmap = QPixmap(160, 160)
-    pixmap.fill(QColor("#1b2a37"))
-    p = QPainter(pixmap)
-    rng = random.Random(17)
-    for _ in range(11000):
-        shade = rng.choice((QColor(4, 13, 22, 65), QColor(104, 120, 130, 32)))
-        p.setPen(shade)
-        p.drawPoint(rng.randrange(160), rng.randrange(160))
-    p.end()
-    return pixmap
-
-
 class WoodFrame(QFrame):
-    """The surrounding wooden case continues behind the control strip."""
+    """Walnut enclosure; one size/DPR-aware buffer, replaced on resize."""
     def paintEvent(self, event):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        rect = QRectF(self.rect()).adjusted(1, 1, -1, -1)
-        clip = QPainterPath()
-        clip.addRoundedRect(rect, 23, 23)
-        p.setClipPath(clip)
-        grain_color = QLinearGradient(0, 0, 0, self.height())
-        for stop, color in ((0, "#a48160"), (.08, "#6d4931"), (.6, "#765137"), (.88, "#855b3a"), (1, "#3c281c")):
-            grain_color.setColorAt(stop, QColor(color))
-        p.fillRect(rect, grain_color)
-        for y in range(0, self.height(), 3):
-            p.setPen(QPen(QColor(28, 12, 5, 40 if y % 2 else 65), .8))
-            line = QPainterPath(QPointF(0, y))
-            line.cubicTo(self.width() * .3, y + math.sin(y) * 5,
-                         self.width() * .7, y - 4, self.width(), y + 2)
-            p.drawPath(line)
-        p.setClipping(False)
-        p.setPen(QPen(QColor("#b99774"), 1))
-        p.setBrush(Qt.BrushStyle.NoBrush)
-        p.drawRoundedRect(rect, 23, 23)
+        key = (self.width(), self.height(), self.devicePixelRatioF())
+        if getattr(self, "_wood_key", None) != key:
+            self._wood = raster(*key, lambda p: paint_wood(p, self.width(), self.height()))
+            self._wood_key = key
+        painter = QPainter(self)
+        painter.drawPixmap(self.rect(), self._wood)
 
 
 class Turntable(QWidget):
-    """Scalable illustrated deck, composed in an 820 x 650 design space."""
-    def __init__(self, parent=None):
+    """Photographic layers with a complete procedural fallback."""
+    def __init__(self, parent=None, *, asset_directory=ASSET_DIRECTORY):
         super().__init__(parent)
         self.track = TRACKS[0]
         self.playing = True
+        self._surface_key = self._layer_density = self._label_colors = None
+        self._layers = {}
+        self._transport = None
+        artwork, self.asset_error = load_artwork(asset_directory)
+        self._asset_art = LayeredTurntable(artwork) if artwork else None
         self.setMinimumSize(470, 410)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self.setAccessibleName("Tocadiscos con vinilo negro, etiqueta roja y brazo dorado")
+        self.setAccessibleName("Tocadiscos con vinilo negro, portada central y brazo de bronce")
+
+    def set_transport(self, strip):
+        """Inset the existing controls into the cabinet's extended wooden face."""
+        self._transport = strip
+        strip.setParent(self)
+        self.setMinimumHeight(522)
+        self._place_transport()
+        strip.show()
+
+    def _place_transport(self):
+        if self._transport is None:
+            return
+        if self._asset_art is not None:
+            art = self._asset_art
+            scale, origin = art.layout_transform(self.size(), self._transport.height())
+            inset = 35
+            left = round(origin.x() + inset * scale)
+            right = round(origin.x() + (art.design_size[0] - inset) * scale)
+            top = round(origin.y() + art.metadata["transport_split"] * scale)
+            self._transport.setGeometry(left, top, right - left, self._transport.height())
+        else:
+            self._transport.setGeometry(12, self.height() - 112, self.width() - 24, 112)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._place_transport()
 
     def set_track(self, track):
         self.track = track
         self.update()
 
+    def _ensure_art(self, scale, dpr):
+        # Bound memory to the current size. Moving between screens also rebuilds
+        # at the new pixel density, rather than enlarging an old low-res buffer.
+        surface_key = (self.width(), self.height(), dpr)
+        if self._surface_key != surface_key:
+            self._surface = raster(*surface_key, lambda p: paint_surface(p, self.width(), self.height()))
+            self._surface_key = surface_key
+        # Half-step buckets avoid rebuilding the expensive groove/metal layers
+        # for every pixel of a live resize. Always render above screen density.
+        density = max(1.5, math.ceil(scale * dpr * 2) / 2)
+        if self._layer_density != density:
+            self._layers = {
+                "base": raster(820, 650, density, paint_base),
+                "record": raster(606, 606, density, paint_record),
+                # Supersample the narrow metallic highlights at small sizes;
+                # otherwise adjacent subpixel ribbons can produce moiré.
+                "arm": raster(ARM_BOUNDS.width(), ARM_BOUNDS.height(), max(2, density), paint_arm),
+            }
+            self._layer_density = density
+            self._label_colors = None
+        if self._label_colors != self.track.colors:
+            self._layers["label"] = raster(224, 224, density, lambda p: paint_label(
+                p, self.track.colors, cover_art(self.track.colors)))
+            self._label_colors = self.track.colors
+
+    @staticmethod
+    def _draw_layer(painter, rect, pixmap):
+        painter.drawPixmap(rect, pixmap, QRectF(pixmap.rect()))
+
     def paintEvent(self, event):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        # Fill the whole available surface; the physical deck keeps its proportions.
-        p.setPen(QPen(QColor("#09131c"), 2))
-        p.setBrush(QColor("#1b2a37"))
-        p.drawRoundedRect(QRectF(self.rect()).adjusted(1, 1, -1, -1), 19, 19)
-        p.save()
-        surface = QPainterPath()
-        surface.addRoundedRect(QRectF(self.rect()).adjusted(2, 2, -2, -2), 18, 18)
-        p.setClipPath(surface)
-        p.drawTiledPixmap(self.rect(), deck_texture())
-        p.restore()
-        scale = min(self.width() / 820, self.height() / 650)
-        p.translate((self.width() - 820 * scale) / 2, (self.height() - 650 * scale) / 2)
-        p.scale(scale, scale)
-        center = QPointF(363, 319)
-        p.setPen(Qt.PenStyle.NoPen)
-        for radius in range(321, 309, -2):
-            p.setBrush(QColor(0, 0, 0, 15))
-            p.drawEllipse(QPointF(365, 325), radius, radius)
-        wood = QLinearGradient(80, 0, 650, 650)
-        for stop, color in ((0, "#b08960"), (.4, "#63442e"), (.8, "#986138"), (1, "#3f291c")):
-            wood.setColorAt(stop, QColor(color))
-        p.setBrush(wood)
-        p.setPen(QPen(QColor("#b58c60"), 1))
-        p.drawEllipse(center, 310, 310)
-        metal = QLinearGradient(0, 0, 610, 610)
-        for stop, color in ((0, "#cfbd9d"), (.3, "#4f524e"), (.5, "#c0bcae"), (.8, "#343c3f"), (1, "#7f8178")):
-            metal.setColorAt(stop, QColor(color))
-        p.setBrush(metal)
-        p.setPen(Qt.PenStyle.NoPen)
-        p.drawEllipse(center, 303, 303)
-        sheen = QConicalGradient(center, 32)
-        for stop, color in ((0, "#08090b"), (.07, "#1c1e20"), (.15, "#555658"),
-                            (.22, "#252729"), (.32, "#08090a"), (.5, "#070809"),
-                            (.61, "#424548"), (.69, "#242628"), (.8, "#090a0c"), (1, "#08090b")):
-            sheen.setColorAt(stop, QColor(color))
-        p.setBrush(sheen)
-        p.drawEllipse(center, 300, 300)
-        p.setBrush(Qt.BrushStyle.NoBrush)
-        for radius in range(114, 298, 2):
-            p.setPen(QPen(QColor(210, 210, 211, 25 if radius % 6 else 44), .55))
-            p.drawEllipse(center, radius, radius)
-        for radius in (121, 155, 204, 251, 292):
-            p.setPen(QPen(QColor(0, 0, 0, 140), 2))
-            p.drawEllipse(center, radius, radius)
-        p.setPen(QPen(QColor("#db7b79"), 1))
-        p.setBrush(QColor(self.track.colors[0]))
-        p.drawEllipse(center, 110, 110)
-        p.setPen(QPen(QColor(255, 210, 190, 45), .7))
-        p.setBrush(Qt.BrushStyle.NoBrush)
-        p.drawEllipse(center, 103, 103)
-        p.drawPixmap(307, 263, 112, 112, cover_art(self.track.colors))
-        p.setPen(QPen(QColor("#bb9f74"), 2))
-        p.drawRect(QRectF(307, 263, 112, 112))
-        brass = QLinearGradient(685, 80, 743, 104)
-        for stop, color in ((0, "#5b3a1a"), (.22, "#bd9160"), (.48, "#f6dbac"), (.7, "#cba16d"), (1, "#63411e")):
-            brass.setColorAt(stop, QColor(color))
-        p.setPen(QPen(QColor("#65482d"), 1))
-        p.setBrush(brass)
-        p.drawEllipse(center, 7, 7)
-        p.setBrush(QColor("#f1d4a2"))
-        p.drawEllipse(QPointF(361, 316), 2, 2)
-        # Speed selector at the upper left of the deck.
-        p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(QColor("#080f15"))
-        p.drawEllipse(QPointF(55, 74), 29, 29)
-        knob = QLinearGradient(30, 43, 78, 93)
-        for stop, color in ((0, "#fbdfb0"), (.45, "#b48b59"), (.55, "#f4d3a1"), (1, "#6a4623")):
-            knob.setColorAt(stop, QColor(color))
-        p.setBrush(knob)
-        p.drawEllipse(QPointF(55, 68), 21, 21)
-        p.setPen(QPen(QColor("#ead4ad"), 1.2))
-        p.drawLine(QPointF(55, 40), QPointF(55, 35))
-        p.setFont(font(10))
-        p.drawText(QRectF(26, 111, 75, 18), "• 33     45")
-        # Pivot assembly and brass counterweight.
-        pivot = QPointF(728, 105)
-        p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(QColor(0, 0, 0, 110))
-        p.drawEllipse(QPointF(732, 111), 56, 56)
-        p.setPen(QPen(QColor("#53616b"), 1.5))
-        p.setBrush(QColor("#263540"))
-        p.drawEllipse(pivot, 50, 50)
-        p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(QColor("#0b151d"))
-        p.drawEllipse(pivot, 36, 36)
-        p.save()
-        p.translate(737, 54)
-        p.rotate(15)
-        counterweight = QLinearGradient(-19, -22, 19, 22)
-        for stop, color in ((0, "#614320"), (.35, "#d2aa72"), (.5, "#f8ddb0"), (1, "#74502c")):
-            counterweight.setColorAt(stop, QColor(color))
-        p.setBrush(counterweight)
-        p.setPen(QPen(QColor("#5a4028"), 1))
-        p.drawRoundedRect(QRectF(-19, -22, 38, 49), 7, 7)
-        p.setBrush(QColor("#302215"))
-        p.drawEllipse(QRectF(-19, 14, 38, 12))
-        p.restore()
-        knob.setStart(702, 79)
-        knob.setFinalStop(754, 131)
-        p.setBrush(knob)
-        p.drawEllipse(pivot, 26, 26)
-        for x, y in ((696, 80), (765, 90), (716, 144)):
-            p.setPen(QPen(QColor("#453a2b"), 1))
-            p.setBrush(QColor("#b49460"))
-            p.drawEllipse(QPointF(x, y), 3, 3)
-        # Curved arm and its shadow are open, unfilled paths.
-        arm = QPainterPath(QPointF(721, 130))
-        arm.lineTo(687, 302)
-        arm.cubicTo(680, 343, 657, 367, 601, 405)
-        p.setBrush(Qt.BrushStyle.NoBrush)
-        p.save()
-        p.translate(5, 7)
-        p.setPen(QPen(QColor(0, 0, 0, 120), 17, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
-        p.drawPath(arm)
-        p.restore()
-        for width, color in ((16, "#3c2918"), (12, "#926a3d"), (8, "#dbb57e"), (3, "#f3d9ac")):
-            p.setPen(QPen(QColor(color), width, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
-            p.drawPath(arm)
-        # Headshell, screws, gold cartridge and needle on the outer grooves.
-        p.save()
-        p.translate(598, 406)
-        p.rotate(46)
-        p.setBrush(QColor("#252a2c"))
-        p.setPen(QPen(QColor("#9b9a8b"), 1))
-        p.drawRoundedRect(QRectF(-18, -7, 36, 64), 4, 4)
-        p.setBrush(counterweight)
-        p.drawRect(QRectF(-16, 48, 32, 12))
-        for y in (7, 35):
-            p.setBrush(QColor("#d1b584"))
-            p.drawEllipse(QPointF(0, y), 3, 3)
-            p.setPen(QPen(QColor("#5a4830"), 1))
-            p.drawLine(QPointF(-2, y), QPointF(2, y))
-        p.setPen(QPen(QColor("#e6c58c"), 2))
-        p.drawLine(QPointF(0, 60), QPointF(0, 65))
-        p.restore()
-        # Small deck engravings and a power indicator.
-        p.setPen(QColor("#ddbb87"))
-        p.setFont(font(11, "Georgia"))
-        p.drawText(QRectF(24, 578, 220, 22), "R E T R O  P L A Y E R")
-        p.setFont(font(8))
-        p.setPen(QColor("#a5adb0"))
-        p.drawText(QRectF(24, 602, 210, 30), "M U S I C  S O U N D S  B E T T E R\nO N  V I N Y L")
-        p.setBrush(QColor("#101b24"))
-        p.setPen(QPen(QColor("#d8b37b" if self.playing else "#6b6d65"), 1.5))
-        p.drawEllipse(QPointF(778, 610), 17, 17)
-        p.drawArc(QRectF(771, 603, 14, 14), 135 * 16, 270 * 16)
-        p.drawLine(QPointF(778, 601), QPointF(778, 608))
+        if self._asset_art is not None:
+            art = self._asset_art
+            transport_height = self._transport.height() if self._transport is not None else 0
+            scale, origin = art.layout_transform(self.size(), transport_height)
+            art.prepare(scale, self.devicePixelRatioF(), cover_art(self.track.colors, 512, circular=True))
+            painter = QPainter(self)
+            painter.setRenderHints(QPainter.RenderHint.Antialiasing |
+                                   QPainter.RenderHint.SmoothPixmapTransform)
+            # Match the shell outside the single wooden silhouette, including
+            # standalone widget captures where Qt does not paint the parent.
+            painter.fillRect(self.rect(), QColor(art.metadata["background"]))
+            painter.translate(origin)
+            painter.scale(scale, scale)
+            art.paint(painter, transport_extension=transport_height / scale)
+            return
+        available_height = self.height() - (112 if self._transport is not None else 0)
+        scale = min(self.width() / 820, available_height / 650)
+        self._ensure_art(scale, self.devicePixelRatioF())
+        painter = QPainter(self)
+        painter.setRenderHints(QPainter.RenderHint.Antialiasing |
+                               QPainter.RenderHint.SmoothPixmapTransform)
+        painter.drawPixmap(self.rect(), self._surface)
+        clip = QPainterPath()
+        clip.addRoundedRect(QRectF(self.rect()).adjusted(4, 4, -4, -4), 15, 15)
+        painter.setClipPath(clip)
+        painter.translate((self.width() - 820 * scale) / 2, (available_height - 650 * scale) / 2)
+        painter.scale(scale, scale)
+        self._draw_layer(painter, QRectF(0, 0, 820, 650), self._layers["base"])
+        # Future rotation can wrap record/label around CENTER without rotating
+        # the platter, fixed spindle or arm. No transforms are animated yet.
+        self._draw_layer(painter, QRectF(CENTER.x() - 303, CENTER.y() - 303, 606, 606), self._layers["record"])
+        self._draw_layer(painter, QRectF(CENTER.x() - 112, CENTER.y() - 112, 224, 224), self._layers["label"])
+        paint_spindle(painter)
+        self._draw_layer(painter, ARM_BOUNDS, self._layers["arm"])
+        paint_power(painter, self.playing)

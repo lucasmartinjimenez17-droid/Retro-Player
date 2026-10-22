@@ -1,0 +1,123 @@
+{
+  "version": 1,
+  "design_size": [
+    820,
+    650
+  ],
+  "background": "#101b25",
+  "record_center": [
+    399,
+    291
+  ],
+  "record_radius": 263,
+  "arm_pivot": [
+    720,
+    127
+  ],
+  "stylus": [
+    554.274,
+    394.3
+  ],
+  "label": {
+    "rect": [
+      299,
+      191,
+      200,
+      200
+    ],
+    "paper_source": [
+      418,
+      404,
+      412,
+      412
+    ]
+  },
+  "layers": {
+    "base": {
+      "file": "base-stay-niche-only.png",
+      "source_size": [
+        1408,
+        1117
+      ],
+      "rect": [
+        0,
+        0,
+        820,
+        650
+      ]
+    },
+    "mount": {
+      "file": "mount.png",
+      "source_size": [
+        1254,
+        1254
+      ],
+      "decode_max": 384,
+      "rect": [
+        645.48,
+        79.21,
+        149.04,
+        149.04
+      ]
+    },
+    "vinyl": {
+      "file": "vinyl.png",
+      "source_size": [
+        1254,
+        1254
+      ],
+      "rect": [
+        123.816,
+        21.99,
+        553.014,
+        553.014
+      ],
+      "source_center": [
+        624,
+        610
+      ]
+    },
+    "spindle": {
+      "file": "spindle.png",
+      "source_size": [
+        1254,
+        1254
+      ],
+      "decode_max": 128,
+      "rect": [
+        382,
+        273.3,
+        34,
+        34
+      ]
+    },
+    "tonearm": {
+      "file": "tonearm.png",
+      "source_size": [
+        1024,
+        1536
+      ],
+      "source_pivot": [
+        770,
+        328
+      ],
+      "source_stylus": [
+        88,
+        1428
+      ],
+      "rect": [
+        532.89,
+        47.296,
+        248.832,
+        373.248
+      ]
+    }
+  },
+  "viewport": [
+    2,
+    20,
+    816,
+    615
+  ],
+  "transport_split": 580
+}

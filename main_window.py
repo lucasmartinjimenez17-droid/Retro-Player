@@ -14,7 +14,7 @@ from ui.session import SessionState
 from ui.liked import LikedSongs
 from ui.albums import AlbumBrowser
 from ui.playlists import PlaylistBrowser
-from ui.widgets import IconButton, TrackRow, Turntable, WoodFrame, cover_art, icon
+from ui.widgets import IconButton, TrackRow, Turntable, cover_art, icon
 
 
 def label(text, name):
@@ -69,11 +69,13 @@ class MainWindow(QMainWindow):
         self._show_track(0, initial=True)
 
     def _player(self):
-        player = WoodFrame()
-        player.setObjectName("woodBase")
+        # The turntable asset already owns the wooden enclosure. A second wood
+        # frame around it and the transport created the nested-box appearance.
+        player = QFrame()
+        player.setObjectName("playerArea")
         layout = QVBoxLayout(player)
-        layout.setContentsMargins(12, 12, 12, 14)
-        layout.setSpacing(10)
+        layout.setContentsMargins(0, 0, 0, 10)
+        layout.setSpacing(0)
         self.turntable = Turntable()
         layout.addWidget(self.turntable, 1)
         strip = QFrame()
@@ -151,7 +153,7 @@ class MainWindow(QMainWindow):
         volume_group.addLayout(volume_line)
         volume_group.addWidget(self.volume_value)
         controls.addLayout(volume_group)
-        layout.addWidget(strip)
+        self.turntable.set_transport(strip)
         return player
 
     def _sidebar(self):
