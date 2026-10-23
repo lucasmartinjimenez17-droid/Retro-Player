@@ -44,6 +44,10 @@ class FrontendTests(unittest.TestCase):
         self.window.show()
         self.app.processEvents()
 
+        # Static/layout regressions use a fixed pose; live timing is covered by
+        # test_turntable_motion so pixel comparisons are deterministic.
+        self.window.turntable.motion.set_active(False)
+
     def tearDown(self):
         self.window.close()
         self.app.processEvents()
@@ -1262,11 +1266,13 @@ class FrontendTests(unittest.TestCase):
 
     def assert_playback_indicators(self):
         w = self.window
+        self.assertEqual(w.turntable.playing, w.is_playing)
+        self.assertIs(w.turntable.track, w.current_track)
         for row in w.findChildren(TrackRow):
             active = row.track.id == w.current_track.id
             self.assertEqual(row.indicator.isVisible(), active and row.isVisible())
             running = row.indicator.animation.state() == QAbstractAnimation.State.Running
-            self.assertEqual(running, active and row.isVisible() and w.is_playing)
+            self.assertEqual(running, active and row.isVisible() and w.visual_playing)
 
     def test_equalizer_moves_freezes_resumes_and_follows_transport(self):
         w = self.window
@@ -1468,7 +1474,7 @@ class FrontendTests(unittest.TestCase):
         for name in ("base", "record", "arm"):
             self.assertEqual(deck._layers[name].cacheKey(), keys[name])
         self.assertEqual(deck_texture.cache_info().misses, texture_info.misses)
-        self.assertFalse(deck.findChildren(QTimer))
+        self.assertEqual(deck.findChildren(QTimer), [deck.motion.timer])
         self.assertFalse(deck.findChildren(QAbstractAnimation))
 
     def test_turntable_density_and_resize_keep_cache_bounded(self):

@@ -131,6 +131,9 @@ class TurntableAssetTests(unittest.TestCase):
             self.assertEqual(before, art.label.toImage())
             deck.set_track(TRACKS[1])
             deck.grab()
+            self.assertEqual(before, art.label.toImage(), "Old label remains until the record is removed")
+            deck.motion.advance(3)
+            deck.grab()
             self.assertNotEqual(before, art.label.toImage())
             deck.playing = False
             deck.grab()
@@ -138,7 +141,8 @@ class TurntableAssetTests(unittest.TestCase):
             deck.grab()
         self.assertEqual(static_keys, {name: buf.cacheKey() for name, buf in art.buffers.items()})
         self.assertIs(deck.track, TRACKS[1])
-        self.assertFalse(deck.findChildren(QTimer))
+        self.assertEqual(deck.findChildren(QTimer), [deck.motion.timer])
+        self.assertFalse(deck.motion.timer.isActive())
         self.assertFalse(deck.findChildren(QAbstractAnimation))
 
     def test_label_is_circular_and_non_square_cover_is_not_stretched(self):

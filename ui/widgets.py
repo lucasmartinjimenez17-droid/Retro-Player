@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 from ui.mock_data import TRACKS, Track, time_text
 from ui.playback_indicator import PlaybackIndicator
 from ui.turntable_assets import ASSET_DIRECTORY, LayeredTurntable, load_artwork
+from ui.turntable_motion import TurntableMotion
 from ui.turntable_art import (
     ARM_BOUNDS, CENTER, deck_texture, paint_arm, paint_base, paint_label,
     paint_power, paint_record, paint_spindle, paint_surface, paint_wood, raster,
@@ -397,15 +398,52 @@ class Turntable(QWidget):
     def __init__(self, parent=None, *, asset_directory=ASSET_DIRECTORY):
         super().__init__(parent)
         self.track = TRACKS[0]
-        self.playing = True
+        self.display_track = self.track
+        self._fallback_playing = False
         self._surface_key = self._layer_density = self._label_colors = None
         self._layers = {}
         self._transport = None
         artwork, self.asset_error = load_artwork(asset_directory)
         self._asset_art = LayeredTurntable(artwork) if artwork else None
+        self.motion = TurntableMotion(artwork.metadata, self) if artwork else None
+        if self.motion is not None:
+            self.motion.changed.connect(self._motion_repaint)
+            self.motion.record_swapped.connect(self._swap_record)
+        self._static_key = self._static_scene = None
+        self._empty_key = self._empty_scene = None
         self.setMinimumSize(470, 410)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.setAccessibleName("Tocadiscos con vinilo negro, portada central y brazo de bronce")
+
+    @property
+    def playing(self):
+        return self.motion.playing if self.motion is not None else self._fallback_playing
+
+    @playing.setter
+    def playing(self, playing):
+        self._fallback_playing = bool(playing)
+        if self.motion is not None:
+            self.motion.set_playing(playing)
+        self.update()
+
+    def set_progress(self, seconds, duration):
+        if self.motion is not None:
+            self.motion.set_progress(seconds, duration)
+
+    def _motion_repaint(self):
+        # The inset controls and wooden lower face do not need frame updates.
+        bottom = self._transport.y() if self._transport is not None else self.height()
+        self.update(0, 0, self.width(), bottom)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if self.motion is not None:
+            self.motion.set_active(not self.window().isMinimized(), self.devicePixelRatioF())
+
+    def hideEvent(self, event):
+        if self.motion is not None:
+            self.motion.set_active(False)
+        super().hideEvent(event)
 
     def set_transport(self, strip):
         """Inset the existing controls into the cabinet's extended wooden face."""
@@ -434,7 +472,16 @@ class Turntable(QWidget):
         self._place_transport()
 
     def set_track(self, track):
+        different = self.track.id != track.id
         self.track = track
+        if different and self._asset_art is not None:
+            self.motion.request_change()
+        elif self._asset_art is None:
+            self.display_track = track
+        self.update()
+
+    def _swap_record(self):
+        self.display_track = self.track
         self.update()
 
     def _ensure_art(self, scale, dpr):
@@ -471,16 +518,46 @@ class Turntable(QWidget):
             art = self._asset_art
             transport_height = self._transport.height() if self._transport is not None else 0
             scale, origin = art.layout_transform(self.size(), transport_height)
-            art.prepare(scale, self.devicePixelRatioF(), cover_art(self.track.colors, 512, circular=True))
+            art.prepare(scale, self.devicePixelRatioF(), cover_art(self.display_track.colors, 512, circular=True))
+            dpr = self.devicePixelRatioF()
+            key = (self.width(), self.height(), dpr, art.density, transport_height)
+            if key != self._static_key:
+                scene = QPixmap(math.ceil(self.width() * dpr), math.ceil(self.height() * dpr))
+                scene.setDevicePixelRatio(dpr)
+                scene.fill(QColor(art.metadata["background"]))
+                p = QPainter(scene)
+                p.setRenderHints(QPainter.RenderHint.Antialiasing | QPainter.RenderHint.SmoothPixmapTransform)
+                p.translate(origin)
+                p.scale(scale, scale)
+                art.paint_static(p, transport_height / scale)
+                p.end()
+                self._static_scene, self._static_key = scene, key
+                if self.motion is not None:
+                    self.motion.set_active(self.motion.active, dpr)
             painter = QPainter(self)
             painter.setRenderHints(QPainter.RenderHint.Antialiasing |
                                    QPainter.RenderHint.SmoothPixmapTransform)
             # Match the shell outside the single wooden silhouette, including
             # standalone widget captures where Qt does not paint the parent.
-            painter.fillRect(self.rect(), QColor(art.metadata["background"]))
+            fading = self.motion.record_opacity < 1
+            if fading and self._empty_key != key:
+                empty = QPixmap(self._static_scene.size())
+                empty.setDevicePixelRatio(dpr)
+                empty.fill(QColor(art.metadata["background"]))
+                p = QPainter(empty)
+                p.setRenderHints(QPainter.RenderHint.Antialiasing | QPainter.RenderHint.SmoothPixmapTransform)
+                p.translate(origin)
+                p.scale(scale, scale)
+                art.paint_static(p, transport_height / scale, include_record=False)
+                p.end()
+                self._empty_scene, self._empty_key = empty, key
+            painter.drawPixmap(0, 0, self._empty_scene if fading else self._static_scene)
             painter.translate(origin)
             painter.scale(scale, scale)
-            art.paint(painter, transport_extension=transport_height / scale)
+            if fading:
+                art.paint_fading_record(painter, self.motion.record_angle, self.motion.record_opacity)
+            art.paint_moving(painter, self.motion.record_angle, self.motion.arm_angle,
+                             self.motion.arm_lift, include_record=not fading)
             return
         available_height = self.height() - (112 if self._transport is not None else 0)
         scale = min(self.width() / 820, available_height / 650)

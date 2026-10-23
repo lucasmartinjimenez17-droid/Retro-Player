@@ -1,7 +1,7 @@
 """RetroPlayer V1: offline view and local mock state, independent of Spotify."""
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal, QTimer
+from PySide6.QtCore import QEvent, Qt, Signal, QTimer
 from PySide6.QtWidgets import (
     QButtonGroup, QFrame, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMenu,
     QPushButton, QScrollArea, QSizePolicy, QSlider, QStackedWidget, QVBoxLayout, QWidget,
@@ -66,7 +66,16 @@ class MainWindow(QMainWindow):
         body.addWidget(self._player(), 7)
         body.addWidget(self._sidebar(), 4)
         layout.addLayout(body, 1)
+        if self.turntable.motion is not None:
+            self.turntable.motion.transition_changed.connect(self._sync_visual_playback)
         self._show_track(0, initial=True)
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.WindowStateChange and hasattr(self, "turntable"):
+            motion = self.turntable.motion
+            if motion is not None:
+                motion.set_active(self.isVisible() and not self.isMinimized(), self.devicePixelRatioF())
 
     def _player(self):
         # The turntable asset already owns the wooden enclosure. A second wood
@@ -285,15 +294,13 @@ class MainWindow(QMainWindow):
         self.progress.setValue(102 if initial else 0)
         self.progress.blockSignals(False)
         self.elapsed.setText(time_text(self.progress.value()))
+        self.turntable.set_progress(self.progress.value(), self.progress.maximum())
+        self.turntable.playing = self.is_playing
         for row in self.rows:
             row.setChecked(row.track.id == track.id)
         for row in self.top_rows:
             row.setChecked(row.track.id == track.id)
-        self.playlists.sync_playback(self.current_track, self.is_playing)
-        self.albums.sync_playback(track, self.is_playing)
-        self.liked.sync_playback(track, self.is_playing)
-        self.artist_profile.sync_playback(track, self.is_playing)
-        self._sync_queue_selection()
+        self._sync_visual_playback()
         self._filter_rows()
         if not initial:
             self.track_selected.emit(track)
@@ -313,21 +320,34 @@ class MainWindow(QMainWindow):
         self.is_playing = not self.is_playing
         self.play_button.set_kind("pause" if self.is_playing else "play",
                                   "Pausar demo" if self.is_playing else "Reanudar demo")
-        self.status.setText("DEMO SESSION" if self.is_playing else "DEMO PAUSED")
         self.turntable.playing = self.is_playing
         self.turntable.update()
-        for row in [*self.rows, *self.top_rows]:
-            row.playing = self.is_playing
-            row.update()
-        self.playlists.sync_playback(self.current_track, self.is_playing)
-        self.albums.sync_playback(self.current_track, self.is_playing)
-        self.liked.sync_playback(self.current_track, self.is_playing)
-        self.artist_profile.sync_playback(self.current_track, self.is_playing)
-        self._sync_queue_selection()
+        self._sync_visual_playback()
         self.playback_toggled.emit(self.is_playing)
+
+    @property
+    def visual_playing(self):
+        motion = self.turntable.motion
+        return self.is_playing and not (motion is not None and motion.changing)
+
+    def _sync_visual_playback(self, _changing=None):
+        # is_playing is the user's intent; indicators only run once the needle
+        # has landed. Do not emit fake Play/Pause actions for mechanical phases.
+        playing = self.visual_playing
+        changing = self.turntable.motion is not None and self.turntable.motion.changing
+        self.status.setText("CHANGING RECORD" if changing else "DEMO SESSION" if playing else "DEMO PAUSED")
+        for row in [*self.rows, *self.top_rows]:
+            row.playing = playing
+            row.update()
+        self.playlists.sync_playback(self.current_track, playing)
+        self.albums.sync_playback(self.current_track, playing)
+        self.liked.sync_playback(self.current_track, playing)
+        self.artist_profile.sync_playback(self.current_track, playing)
+        self._sync_queue_selection()
 
     def _seek(self, seconds):
         self.elapsed.setText(time_text(seconds))
+        self.turntable.set_progress(seconds, self.progress.maximum())
         self.seek_requested.emit(seconds)
 
     def _volume_changed(self, value):
@@ -411,7 +431,7 @@ class MainWindow(QMainWindow):
     def _sync_queue_selection(self):
         for row in self.queue_rows:
             row.setChecked(row.track.id == self.current_track.id)
-            row.playing = self.is_playing
+            row.playing = self.visual_playing
             row.update()
 
     def _search_scroll(self):
